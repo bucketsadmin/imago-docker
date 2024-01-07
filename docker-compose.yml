@@ -102,7 +102,7 @@ services:
       - traefik.http.middlewares.traefik-dash-auth.basicauth.users=${TRAEFIK_USERS}
       - traefik.http.middlewares.sslheader.headers.customrequestheaders.X-Forwarded-Proto=https
 
-  portainer_ee:
+  portainer_ce:
     image: 'portainer/portainer-ce:latest'
     container_name: portainer
     restart: always
