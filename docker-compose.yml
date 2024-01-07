@@ -1,0 +1,137 @@
+---
+version: "3.8"
+networks:
+  nginx_net:
+    name: nginx_net
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: "10.118.100.0/24"
+          gateway: "10.118.100.1"
+
+  util_net:
+    name: util_net
+    # external: true
+
+services:
+  traefik:
+    image: traefik:latest
+    container_name: traefik
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - nginx_net
+      - util_net
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - traefik_data:/etc/traefik/acme
+      - /docker/traefik/starfleet-ops/logs:/opt/logs
+    environment:
+      - CLOUDFLARE_EMAIL=${CLOUDFLARE_EMAIL}
+      - CLOUDFLARE_DNS_API_TOKEN=${CLOUDFLARE_DNS_API_TOKEN}
+      - CLOUDFLARE_ZONE_API_TOKEN=${CLOUDFLARE_ZONE_API_TOKEN}
+      - LETS_ENCRYPT_EMAIL=${LETS_ENCRYPT_EMAIL}
+    command:
+      # access log
+      - --accesslog=true
+      - --accesslog.filepath=/opt/logs/access.log
+      - --log.filePath=/opt/logs/traefik.log
+      # Enable dashboard
+      - --api.dashboard=true
+      - --providers.docker.exposedbydefault=false
+      - --serversTransport.insecureSkipVerify=true
+      - --providers.docker=true
+      - --providers.docker.network=nginx_net
+      # Entrypoints
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints=Name:http Address::80 Redirect.EntryPoint:https
+      - --entrypoints=Name:https Address::443 TLS
+      - --entryPoints.web.forwardedHeaders.trustedIPs=10.0.0.0/8
+      - --entryPoints.websecure.forwardedHeaders.trustedIPs=10.0.0.0/8
+      # Certificates
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare
+      - --certificatesresolvers.letsencrypt.acme.email=${LETS_ENCRYPT_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/etc/traefik/acme/acme.json
+      # needed so internal DNS doesn't dick with things
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.resolvers=1.1.1.1:53,1.0.0.1:53
+    labels:
+      # Dashboard config
+      - traefik.enable=true
+      - traefik.http.routers.traefik-dash.rule=Host(`${TRAEFIK}.${DOMAIN}`)
+      - traefik.http.routers.traefik-dash.service=api@internal
+      - traefik.http.routers.traefik-dash.middlewares=traefik-dash-auth
+      - traefik.http.routers.traefik-dash.tls=true
+      - traefik.http.routers.traefik-dash.tls.certResolver=letsencrypt
+      # services setup
+      - traefik.http.middlewares.traefik-dash-auth.basicauth.users=${TRAEFIK_USERS}
+      - traefik.http.services.srv-traefik-dash.loadbalancer.passhostheader=true
+      - traefik.http.middlewares.sslheader.headers.customrequestheaders.X-Forwarded-Proto=https
+
+  goaccess:
+    image: xavierh/goaccess-for-nginxproxymanager:latest
+    container_name: goaccess
+    restart: unless-stopped
+    networks:
+      - nginx_net
+    #ports:
+      #- '7880:7880'
+    environment:
+      - PUID=1050
+      - PGID=1050
+      - TZ=America/Chicago
+      - SKIP_ARCHIVED_LOGS=false
+      - DEBUG=False
+      - BASIC_AUTH=False 
+      - EXCLUDE_IPS=127.0.0.1,10.118.100.0/24 #optional - comma delimited
+      - LOG_TYPE=TRAEFIK #optional
+    volumes:
+      - /docker/traefik/starfleet-ops/logs:/opt/log
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.traefik-stats.rule=Host(`stats-${TRAEFIK}.${DOMAIN}`)
+      - traefik.http.routers.traefik-stats.tls=true
+      - traefik.http.routers.traefik-stats.tls.certResolver=letsencrypt
+      - traefik.http.services.traefik-stats.loadbalancer.server.port=7880
+      - traefik.http.routers.traefik-stats.middlewares=traefik-dash-auth
+      - traefik.http.middlewares.traefik-dash-auth.basicauth.users=${TRAEFIK_USERS}
+      - traefik.http.middlewares.sslheader.headers.customrequestheaders.X-Forwarded-Proto=https
+
+  portainer_ee:
+    image: 'portainer/portainer-ce:latest'
+    container_name: portainer
+    restart: always
+    volumes:
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+      - portainer_certs:/etc/ssl/acme
+    networks:
+      - portainer_net
+#    ports:
+#      - 9000:9000
+    labels:
+      # router setup
+      - traefik.enable=true
+      - traefik.docker.network=portainer_net
+      - traefik.http.routers.portainer.rule=Host(`${DOCKER}.${DOMAIN}`)
+      - traefik.http.routers.portainer.tls=true
+      - traefik.http.routers.portainer.tls.certResolver=letsencrypt
+      # services setup
+      - traefik.http.services.srv-portainer.loadbalancer.server.port=9000
+      - traefik.http.services.srv-portainer.loadbalancer.passhostheader=true
+      - traefik.http.middlewares.sslheader.headers.customrequestheaders.X-Forwarded-Proto=https
+
+volumes:
+  portainer_certs:
+    name: portainer_certs
+  portainer_data:
+    name: portainer_data
+  traefik_data:
+    name: traefik_data
