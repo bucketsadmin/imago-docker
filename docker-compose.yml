@@ -1,14 +1,14 @@
 ---
 version: "3.8"
 networks:
-  nginx_net:
-    name: nginx_net
+  portainer_net:
+    name: portainer_net
     driver: bridge
     ipam:
       driver: default
       config:
-        - subnet: "10.118.100.0/24"
-          gateway: "10.118.100.1"
+        - subnet: "10.118.0.0/24"
+          gateway: "10.118.0.1"
 
   util_net:
     name: util_net
@@ -23,8 +23,7 @@ services:
       - "80:80"
       - "443:443"
     networks:
-      - nginx_net
-      - util_net
+      - portainer_net
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
       - traefik_data:/etc/traefik/acme
@@ -79,7 +78,7 @@ services:
     container_name: goaccess
     restart: unless-stopped
     networks:
-      - nginx_net
+      - portainer_net
     #ports:
       #- '7880:7880'
     environment:
